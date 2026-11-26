@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.env
+*.log
+.dart_tool/
+.idea/
+build/
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
