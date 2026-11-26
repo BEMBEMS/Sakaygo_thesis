@@ -9,6 +9,13 @@ import {
 import { notFound } from '../http/errors.js';
 import { parseRequestBody } from '../http/validation.js';
 
+function pathParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) {
+    return value[0] ?? '';
+  }
+  return value ?? '';
+}
+
 export function createZonesRouter(): Router {
   const router = Router();
 
@@ -17,7 +24,7 @@ export function createZonesRouter(): Router {
   });
 
   router.get('/:code', async (request, response) => {
-    const zone = await findZoneByCode(request.params.code, false);
+    const zone = await findZoneByCode(pathParam(request.params.code), false);
 
     if (!zone) {
       throw notFound('ZONE_NOT_FOUND', 'Operating zone was not found');
@@ -29,7 +36,7 @@ export function createZonesRouter(): Router {
   router.post('/:code/validate-location', authenticate, async (request, response) => {
     const payload = parseRequestBody(locationValidationSchema, request.body);
     const result = await validateLocationInZone(
-      request.params.code,
+      pathParam(request.params.code),
       payload.latitude,
       payload.longitude,
     );

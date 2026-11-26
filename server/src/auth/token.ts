@@ -26,7 +26,7 @@ export function signAccessToken(payload: AccessTokenPayload): string {
     env.JWT_SECRET,
     {
       subject: payload.sub,
-      expiresIn: env.JWT_EXPIRES_IN,
+      expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
       issuer: ISSUER,
       audience: AUDIENCE,
     },

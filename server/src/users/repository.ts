@@ -26,7 +26,7 @@ interface AuthUserRow {
 }
 
 interface TodaRow {
-  toda_id: string;
+  toda_org_id: string;
   code: string;
   name: string;
   service_area_name: string;
@@ -182,17 +182,17 @@ export async function findActiveTodaWithZone(todaOrgId: string): Promise<{
   }>(
     `
     SELECT
-      t.toda_org_id,
+      t.toda_id AS toda_org_id,
       (
         SELECT z.zone_id
         FROM operating_zones z
-        WHERE z.toda_org_id = t.toda_org_id
+        WHERE z.toda_org_id = t.toda_id
           AND z.zone_status = 'active'
         ORDER BY z.code
         LIMIT 1
       ) AS zone_id
     FROM toda_organizations t
-    WHERE t.toda_org_id = $1 AND t.is_active = true
+    WHERE t.toda_id = $1 AND t.is_active = true
     LIMIT 1
     `,
     [todaOrgId],
@@ -358,14 +358,14 @@ export async function listActiveTodas(): Promise<TodaOption[]> {
   const result = await pool.query<TodaRow>(
     `
     SELECT
-      t.toda_org_id,
+      t.toda_id AS toda_org_id,
       t.code,
       t.name,
       t.service_area_name,
       (
         SELECT z.code
         FROM operating_zones z
-        WHERE z.toda_org_id = t.toda_org_id
+        WHERE z.toda_org_id = t.toda_id
           AND z.zone_status = 'active'
         ORDER BY z.code
         LIMIT 1

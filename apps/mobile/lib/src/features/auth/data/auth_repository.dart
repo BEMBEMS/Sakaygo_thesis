@@ -8,14 +8,12 @@ import '../domain/auth_models.dart';
 import 'api_exception.dart';
 
 class AuthRepository {
-  const AuthRepository({http.Client? client, String? baseUrl})
-    : _client = client,
-      _baseUrl = baseUrl;
+  const AuthRepository({this.client, this.baseUrl});
 
-  final http.Client? _client;
-  final String? _baseUrl;
+  final http.Client? client;
+  final String? baseUrl;
 
-  String get _root => (_baseUrl ?? AppConfig.apiBaseUrl).replaceAll(RegExp(r'/$'), '');
+  String get _root => (baseUrl ?? AppConfig.apiBaseUrl).replaceAll(RegExp(r'/$'), '');
 
   Future<Map<String, dynamic>> _request(
     String method,
@@ -23,7 +21,7 @@ class AuthRepository {
     Map<String, dynamic>? body,
     String? token,
   }) async {
-    final client = _client ?? http.Client();
+    final client = this.client ?? http.Client();
     final uri = Uri.parse('$_root$path');
     final headers = <String, String>{
       'Content-Type': 'application/json',
@@ -52,7 +50,7 @@ class AuthRepository {
         message: 'Unable to connect to the server.',
       );
     } finally {
-      if (_client == null) {
+      if (this.client == null) {
         client.close();
       }
     }
