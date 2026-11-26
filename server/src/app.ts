@@ -10,6 +10,7 @@ import {
   defaultHealthChecks,
   type HealthChecks,
 } from './routes/health.js';
+import { createPassengerRouter } from './routes/passenger.js';
 import { createTodasRouter } from './routes/todas.js';
 import { createUsersRouter } from './routes/users.js';
 import { createZonesRouter } from './routes/zones.js';
@@ -31,6 +32,7 @@ export function createApp(checks: HealthChecks = defaultHealthChecks): express.E
 
   app.use('/api/v1/auth', createAuthRouter());
   app.use('/api/v1/users', createUsersRouter());
+  app.use('/api/v1/passenger', createPassengerRouter());
   app.use('/api/v1/admin', createAdminRouter());
   app.use('/api/v1/todas', createTodasRouter());
   app.use('/api/v1/zones', createZonesRouter());

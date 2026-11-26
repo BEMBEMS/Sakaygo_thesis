@@ -13,6 +13,7 @@ import '../features/dashboard/presentation/admin_dashboard_page.dart';
 import '../features/dashboard/presentation/role_home_page.dart';
 import '../features/foundation/foundation_page.dart';
 import '../features/foundation/module_foundation_page.dart';
+import '../features/passenger/presentation/passenger_flow_page.dart';
 
 const Set<String> _authPaths = <String>{
   '/passenger/login',
@@ -24,6 +25,7 @@ const Set<String> _authPaths = <String>{
 
 const Map<String, Set<AppRole>> _protectedRoles = <String, Set<AppRole>>{
   '/passenger/home': <AppRole>{AppRole.passenger},
+  '/passenger/request': <AppRole>{AppRole.passenger},
   '/driver/home': <AppRole>{AppRole.driver},
   '/admin/dashboard': <AppRole>{AppRole.admin, AppRole.lgu, AppRole.toda},
 };
@@ -78,7 +80,7 @@ GoRouter createAppRouter(AuthController auth) {
           icon: Icons.person_pin_circle_outlined,
           upcomingPhases: [
             'Phase 2 complete: registration and authentication',
-            'Phase 3: profile, current location, destination, and “I’m Waiting Here”',
+            'Phase 3 complete: profile, current location, destination, and “I’m Waiting Here”',
             'Phase 5: matching status, recommended driver, and pickup details',
             'Phase 6: acceptance, decline, and request-status notifications',
           ],
@@ -142,6 +144,10 @@ GoRouter createAppRouter(AuthController auth) {
         path: '/passenger/home',
         builder: (context, state) =>
             const RoleHomePage(role: AppRole.passenger),
+      ),
+      GoRoute(
+        path: '/passenger/request',
+        builder: (context, state) => const PassengerFlowPage(),
       ),
       GoRoute(
         path: '/driver/home',

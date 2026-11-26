@@ -30,6 +30,32 @@ export interface PassengerProfile {
   currentLongitude: number | null;
 }
 
+export type PassengerRequestStatus =
+  | 'searching'
+  | 'offered'
+  | 'accepted'
+  | 'en_route'
+  | 'pickup_arrived'
+  | 'onboard'
+  | 'completed'
+  | 'cancelled'
+  | 'expired'
+  | 'unmatched';
+
+export interface PassengerRequest {
+  requestId: string;
+  passengerId: string;
+  pickupLatitude: number;
+  pickupLongitude: number;
+  destinationName: string;
+  destinationLatitude: number;
+  destinationLongitude: number;
+  passengerClass: 'standard' | 'priority';
+  priorityScore: number;
+  status: PassengerRequestStatus;
+  requestedAt: string;
+}
+
 export interface DriverProfile {
   driverId: string;
   todaOrgId: string;
