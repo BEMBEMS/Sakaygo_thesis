@@ -52,10 +52,24 @@ export const loginSchema = z
   })
   .strict();
 
-export const locationValidationSchema = z
+const coordinateSchema = z
   .object({
     latitude: z.number().min(-90).max(90),
     longitude: z.number().min(-180).max(180),
+  })
+  .strict();
+
+export const locationValidationSchema = coordinateSchema;
+
+export const updatePassengerLocationSchema = coordinateSchema;
+
+export const createPassengerRequestSchema = z
+  .object({
+    pickupLatitude: z.number().min(-90).max(90),
+    pickupLongitude: z.number().min(-180).max(180),
+    destinationName: z.string().trim().min(1).max(200),
+    destinationLatitude: z.number().min(-90).max(90),
+    destinationLongitude: z.number().min(-180).max(180),
   })
   .strict();
 
@@ -68,4 +82,10 @@ export type DriverRegistrationPayload = z.infer<
 export type LoginPayload = z.infer<typeof loginSchema>;
 export type LocationValidationPayload = z.infer<
   typeof locationValidationSchema
+>;
+export type UpdatePassengerLocationPayload = z.infer<
+  typeof updatePassengerLocationSchema
+>;
+export type CreatePassengerRequestPayload = z.infer<
+  typeof createPassengerRequestSchema
 >;

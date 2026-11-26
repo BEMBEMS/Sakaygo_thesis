@@ -3,6 +3,8 @@ import type {
   AuthUser,
   DriverProfile,
   PassengerProfile,
+  PassengerRequest,
+  PassengerRequestStatus,
   TodaOption,
   VerificationStatus,
 } from './models.js';
@@ -305,6 +307,206 @@ export async function getPassengerProfile(
     currentLongitude:
       row.current_longitude === null ? null : Number(row.current_longitude),
   };
+}
+
+const ACTIVE_PASSENGER_REQUEST_STATUSES: PassengerRequestStatus[] = [
+  'searching',
+  'offered',
+  'accepted',
+  'en_route',
+  'pickup_arrived',
+  'onboard',
+];
+
+const PASSENGER_REQUEST_SELECT = `
+  SELECT
+    request_id,
+    passenger_id,
+    pickup_latitude,
+    pickup_longitude,
+    destination_name,
+    destination_latitude,
+    destination_longitude,
+    passenger_class,
+    priority_score,
+    status,
+    requested_at
+  FROM passenger_requests
+`;
+
+interface PassengerRequestRow {
+  request_id: string;
+  passenger_id: string;
+  pickup_latitude: string;
+  pickup_longitude: string;
+  destination_name: string;
+  destination_latitude: string;
+  destination_longitude: string;
+  passenger_class: 'standard' | 'priority';
+  priority_score: string;
+  status: PassengerRequestStatus;
+  requested_at: Date | string;
+}
+
+function mapPassengerRequest(row: PassengerRequestRow): PassengerRequest {
+  return {
+    requestId: row.request_id,
+    passengerId: row.passenger_id,
+    pickupLatitude: Number(row.pickup_latitude),
+    pickupLongitude: Number(row.pickup_longitude),
+    destinationName: row.destination_name,
+    destinationLatitude: Number(row.destination_latitude),
+    destinationLongitude: Number(row.destination_longitude),
+    passengerClass: row.passenger_class,
+    priorityScore: Number(row.priority_score),
+    status: row.status,
+    requestedAt: String(row.requested_at),
+  };
+}
+
+export async function updatePassengerCurrentLocation(
+  userId: string,
+  latitude: number,
+  longitude: number,
+): Promise<PassengerProfile | null> {
+  const result = await pool.query<{
+    passenger_id: string;
+    passenger_class: 'standard' | 'priority';
+    current_latitude: string | null;
+    current_longitude: string | null;
+  }>(
+    `
+    UPDATE passenger_profiles
+    SET current_latitude = $2, current_longitude = $3
+    WHERE user_id = $1
+    RETURNING passenger_id, passenger_class, current_latitude, current_longitude
+    `,
+    [userId, latitude, longitude],
+  );
+  const row = result.rows[0];
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    passengerId: row.passenger_id,
+    passengerClass: row.passenger_class,
+    currentLatitude:
+      row.current_latitude === null ? null : Number(row.current_latitude),
+    currentLongitude:
+      row.current_longitude === null ? null : Number(row.current_longitude),
+  };
+}
+
+export async function findActivePassengerRequest(
+  passengerId: string,
+): Promise<PassengerRequest | null> {
+  const result = await pool.query<PassengerRequestRow>(
+    `${PASSENGER_REQUEST_SELECT}
+    WHERE passenger_id = $1 AND status = ANY($2::request_status[])
+    ORDER BY requested_at DESC
+    LIMIT 1`,
+    [passengerId, ACTIVE_PASSENGER_REQUEST_STATUSES],
+  );
+  const row = result.rows[0];
+  return row ? mapPassengerRequest(row) : null;
+}
+
+export interface CreatePassengerRequestInput {
+  userId: string;
+  pickupLatitude: number;
+  pickupLongitude: number;
+  destinationName: string;
+  destinationLatitude: number;
+  destinationLongitude: number;
+}
+
+export async function createPassengerRequest(
+  input: CreatePassengerRequestInput,
+): Promise<PassengerRequest | null> {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    const profile = await client.query<{
+      passenger_id: string;
+      passenger_class: 'standard' | 'priority';
+    }>(
+      `
+      SELECT passenger_id, passenger_class
+      FROM passenger_profiles
+      WHERE user_id = $1
+      LIMIT 1
+      `,
+      [input.userId],
+    );
+    const profileRow = profile.rows[0];
+
+    if (!profileRow) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    const result = await client.query<PassengerRequestRow>(
+      `
+      INSERT INTO passenger_requests (
+        passenger_id,
+        pickup_latitude,
+        pickup_longitude,
+        destination_name,
+        destination_latitude,
+        destination_longitude,
+        passenger_class,
+        status
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'searching')
+      RETURNING
+        request_id,
+        passenger_id,
+        pickup_latitude,
+        pickup_longitude,
+        destination_name,
+        destination_latitude,
+        destination_longitude,
+        passenger_class,
+        priority_score,
+        status,
+        requested_at
+      `,
+      [
+        profileRow.passenger_id,
+        input.pickupLatitude,
+        input.pickupLongitude,
+        input.destinationName,
+        input.destinationLatitude,
+        input.destinationLongitude,
+        profileRow.passenger_class,
+      ],
+    );
+    const row = result.rows[0];
+    await client.query('COMMIT');
+    return row ? mapPassengerRequest(row) : null;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getPassengerRequestById(
+  requestId: string,
+  passengerId: string,
+): Promise<PassengerRequest | null> {
+  const result = await pool.query<PassengerRequestRow>(
+    `${PASSENGER_REQUEST_SELECT}
+    WHERE request_id = $1 AND passenger_id = $2
+    LIMIT 1`,
+    [requestId, passengerId],
+  );
+  const row = result.rows[0];
+  return row ? mapPassengerRequest(row) : null;
 }
 
 export async function getDriverProfile(

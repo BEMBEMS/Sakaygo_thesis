@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../../design/components/app_button.dart';
 import '../../../design/components/app_card.dart';
 import '../../../design/components/app_scaffold.dart';
 import '../../auth/domain/auth_models.dart';
@@ -49,12 +50,36 @@ class RoleHomePage extends StatelessWidget {
                     const SizedBox(height: 8),
                     Text(
                       role == AppRole.passenger
-                          ? 'Passenger authentication is active. Request flows are planned for Phase 3.'
+                          ? 'Passenger authentication is active. You can capture your location and submit a waiting request.'
                           : 'Driver authentication is active. Verification and dispatch flows are planned for Phase 4.',
                     ),
                   ],
                 ),
               ),
+              if (role == AppRole.passenger) ...[
+                const SizedBox(height: 16),
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Waiting request',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Record where you are waiting and where you want to go.',
+                      ),
+                      const SizedBox(height: 16),
+                      AppButton(
+                        label: 'Start “I’m Waiting Here”',
+                        icon: Icons.person_pin_circle_outlined,
+                        onPressed: () => context.go('/passenger/request'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               AppCard(
                 child: Column(
