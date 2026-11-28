@@ -16,7 +16,7 @@ enum AppRole {
   static AppRole fromWireValue(String value) {
     return AppRole.values.firstWhere(
       (role) => role.wireValue == value,
-      orElse: () => AppRole.passenger,
+      orElse: () => throw FormatException('Unknown role: $value'),
     );
   }
 }
@@ -77,9 +77,13 @@ class AuthSession {
   final AuthUser user;
 
   factory AuthSession.fromJson(Map<String, dynamic> json) {
-    return AuthSession(
-      token: json['token'] as String? ?? '',
-      user: AuthUser.fromJson(json['user'] as Map<String, dynamic>),
-    );
+    final token = json['token'] as String?;
+    final user = json['user'];
+
+    if (token == null || token.isEmpty || user is! Map<String, dynamic>) {
+      throw const FormatException('Invalid auth session payload');
+    }
+
+    return AuthSession(token: token, user: AuthUser.fromJson(user));
   }
 }

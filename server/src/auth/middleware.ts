@@ -1,7 +1,7 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { forbidden, unauthorized } from '../http/errors.js';
 import { verifyAccessToken } from './token.js';
-import { findAuthUserById } from '../users/repository.js';
+import { findAuthenticationContext } from '../users/repository.js';
 import type { AuthUser } from '../users/models.js';
 import type { UserRole } from '../users/roles.js';
 
@@ -31,13 +31,18 @@ export const authenticate: RequestHandler = async (
       throw unauthorized('AUTH_TOKEN_INVALID', 'Access token is invalid');
     }
 
-    const user = await findAuthUserById(verified.userId);
+    const context = await findAuthenticationContext(verified.userId);
 
-    if (!user || !user.isActive || user.role !== verified.role) {
+    if (
+      !context ||
+      !context.user.isActive ||
+      context.user.role !== verified.role ||
+      context.tokenVersion !== verified.tokenVersion
+    ) {
       throw unauthorized('AUTH_USER_INVALID', 'Authenticated user is not active');
     }
 
-    request.authUser = user;
+    request.authUser = context.user;
     next();
   } catch (error) {
     next(error);

@@ -30,42 +30,46 @@ const Map<String, Set<AppRole>> _protectedRoles = <String, Set<AppRole>>{
   '/admin/dashboard': <AppRole>{AppRole.admin, AppRole.lgu, AppRole.toda},
 };
 
+String? resolveAuthRedirect(AuthController auth, String path) {
+  if (auth.status == AuthStatus.unknown) {
+    return _protectedRoles.containsKey(path) ? '/' : null;
+  }
+
+  final allowedRoles = _protectedRoles[path];
+
+  if (auth.status == AuthStatus.unauthenticated) {
+    return allowedRoles == null ? null : _loginPathFor(path);
+  }
+
+  final user = auth.user;
+
+  if (user == null) {
+    return allowedRoles == null ? null : _loginPathFor(path);
+  }
+
+  if (_authPaths.contains(path)) {
+    return _homeFor(user);
+  }
+
+  if (allowedRoles != null && !allowedRoles.contains(user.role)) {
+    return '/unauthorized';
+  }
+
+  if (path == '/driver/home' &&
+      user.role == AppRole.driver &&
+      user.verificationStatus != 'verified') {
+    return '/unauthorized';
+  }
+
+  return null;
+}
+
 GoRouter createAppRouter(AuthController auth) {
   return GoRouter(
     initialLocation: '/',
     refreshListenable: auth,
-    redirect: (context, state) {
-      final path = state.uri.path;
-
-      if (auth.status == AuthStatus.unknown) {
-        return null;
-      }
-
-      final allowedRoles = _protectedRoles[path];
-
-      if (auth.status == AuthStatus.unauthenticated) {
-        if (allowedRoles != null) {
-          return _loginPathFor(path);
-        }
-        return null;
-      }
-
-      final user = auth.user;
-
-      if (user == null) {
-        return allowedRoles == null ? null : _loginPathFor(path);
-      }
-
-      if (_authPaths.contains(path)) {
-        return _homeFor(user.role);
-      }
-
-      if (allowedRoles != null && !allowedRoles.contains(user.role)) {
-        return '/unauthorized';
-      }
-
-      return null;
-    },
+    redirect: (context, state) =>
+        resolveAuthRedirect(auth, state.uri.path),
     routes: [
       GoRoute(
         path: '/',
@@ -187,11 +191,13 @@ String _loginPathFor(String path) {
   return '/passenger/login';
 }
 
-String _homeFor(AppRole role) {
-  if (role == AppRole.driver) {
-    return '/driver/home';
+String _homeFor(AuthUser user) {
+  if (user.role == AppRole.driver) {
+    return user.verificationStatus == 'verified'
+        ? '/driver/home'
+        : '/unauthorized';
   }
-  if (role.isAdministrative) {
+  if (user.role.isAdministrative) {
     return '/admin/dashboard';
   }
   return '/passenger/home';

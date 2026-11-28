@@ -15,22 +15,87 @@ import {
   createDriver,
   createPassenger,
   findCredentialsByIdentifier,
-  findActiveTodaWithZone,
+  recordFailedLogin,
+  resetLoginAttempts,
+  revokeUserTokens,
+  TodaNotAuthorizedError,
+  type LoginCredentials,
 } from '../users/repository.js';
 
+const MAX_FAILED_LOGIN_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MINUTES = 15;
+const INVALID_CREDENTIALS_MESSAGE = 'Invalid credentials';
+
 function isUniqueViolation(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    'code' in error &&
-    error.code === '23505'
-  );
+  return error instanceof Error && 'code' in error && error.code === '23505';
 }
 
-function requireActiveToda(todaOrgId: string): Promise<{
-  todaOrgId: string;
-  zoneId: string | null;
-} | null> {
-  return findActiveTodaWithZone(todaOrgId);
+function isLocked(credentials: LoginCredentials): boolean {
+  if (!credentials.lockedUntil) {
+    return false;
+  }
+
+  return new Date(credentials.lockedUntil).getTime() > Date.now();
+}
+
+async function authenticateCredentials(
+  identifier: string,
+  password: string,
+): Promise<LoginCredentials> {
+  const credentials = await findCredentialsByIdentifier(identifier);
+
+  if (!credentials) {
+    await createAuditLog(null, 'LOGIN_FAILED', 'users', null, {
+      reason: 'UNKNOWN_IDENTIFIER',
+    });
+    throw unauthorized('INVALID_CREDENTIALS', INVALID_CREDENTIALS_MESSAGE);
+  }
+
+  if (isLocked(credentials)) {
+    await createAuditLog(
+      credentials.user.userId,
+      'LOGIN_LOCKED',
+      'users',
+      credentials.user.userId,
+    );
+    throw unauthorized(
+      'ACCOUNT_LOCKED',
+      'Account is temporarily locked. Try again later.',
+    );
+  }
+
+  const passwordMatches = await verifyPassword(password, credentials.passwordHash);
+
+  if (!credentials.user.isActive || !passwordMatches) {
+    if (credentials.user.isActive) {
+      await recordFailedLogin(
+        credentials.user.userId,
+        MAX_FAILED_LOGIN_ATTEMPTS,
+        LOGIN_LOCKOUT_MINUTES,
+      );
+    }
+
+    await createAuditLog(
+      credentials.user.userId,
+      'LOGIN_FAILED',
+      'users',
+      credentials.user.userId,
+      { reason: credentials.user.isActive ? 'BAD_PASSWORD' : 'INACTIVE_ACCOUNT' },
+    );
+    throw unauthorized('INVALID_CREDENTIALS', INVALID_CREDENTIALS_MESSAGE);
+  }
+
+  await resetLoginAttempts(credentials.user.userId);
+  return credentials;
+}
+
+function issueAccessToken(credentials: LoginCredentials): string {
+  return signAccessToken({
+    sub: credentials.user.userId,
+    username: credentials.user.username,
+    role: credentials.user.role,
+    tokenVersion: credentials.tokenVersion,
+  });
 }
 
 export function createAuthRouter(): Router {
@@ -79,15 +144,6 @@ export function createAuthRouter(): Router {
   router.post('/driver/register', async (request, response) => {
     const payload = parseRequestBody(driverRegistrationSchema, request.body);
 
-    const toda = await requireActiveToda(payload.todaOrgId);
-
-    if (!toda) {
-      throw forbidden(
-        'TODA_NOT_AUTHORIZED',
-        'Selected TODA is not active or authorized',
-      );
-    }
-
     try {
       const user = await createDriver({
         username: payload.username,
@@ -115,6 +171,12 @@ export function createAuthRouter(): Router {
         driverId: user.driverId,
       });
     } catch (error) {
+      if (error instanceof TodaNotAuthorizedError) {
+        throw forbidden(
+          'TODA_NOT_AUTHORIZED',
+          'Selected TODA is not active or has no active operating zone',
+        );
+      }
       if (isUniqueViolation(error)) {
         throw conflict(
           'ACCOUNT_EXISTS',
@@ -127,21 +189,11 @@ export function createAuthRouter(): Router {
 
   router.post('/login', async (request, response) => {
     const payload = parseRequestBody(loginSchema, request.body);
-    const credentials = await findCredentialsByIdentifier(payload.identifier);
-
-    if (
-      !credentials ||
-      !credentials.user.isActive ||
-      !(await verifyPassword(payload.password, credentials.passwordHash))
-    ) {
-      throw unauthorized('INVALID_CREDENTIALS', 'Invalid credentials');
-    }
-
-    const token = signAccessToken({
-      sub: credentials.user.userId,
-      username: credentials.user.username,
-      role: credentials.user.role,
-    });
+    const credentials = await authenticateCredentials(
+      payload.identifier,
+      payload.password,
+    );
+    const token = issueAccessToken(credentials);
 
     await createAuditLog(
       credentials.user.userId,
@@ -160,28 +212,26 @@ export function createAuthRouter(): Router {
 
   router.post('/admin/login', async (request, response) => {
     const payload = parseRequestBody(loginSchema, request.body);
-    const credentials = await findCredentialsByIdentifier(payload.identifier);
-
-    if (
-      !credentials ||
-      !credentials.user.isActive ||
-      !(await verifyPassword(payload.password, credentials.passwordHash))
-    ) {
-      throw unauthorized('INVALID_CREDENTIALS', 'Invalid credentials');
-    }
+    const credentials = await authenticateCredentials(
+      payload.identifier,
+      payload.password,
+    );
 
     if (!isAdminRole(credentials.user.role)) {
+      await createAuditLog(
+        credentials.user.userId,
+        'ADMIN_LOGIN_DENIED',
+        'users',
+        credentials.user.userId,
+        { role: credentials.user.role },
+      );
       throw forbidden(
         'ADMIN_ACCESS_DENIED',
         'Account is not authorized for the admin dashboard',
       );
     }
 
-    const token = signAccessToken({
-      sub: credentials.user.userId,
-      username: credentials.user.username,
-      role: credentials.user.role,
-    });
+    const token = issueAccessToken(credentials);
 
     await createAuditLog(
       credentials.user.userId,
@@ -196,6 +246,20 @@ export function createAuthRouter(): Router {
       tokenType: 'Bearer',
       user: credentials.user,
     });
+  });
+
+  router.post('/logout', authenticate, async (request, response) => {
+    const user = getAuthUser(request);
+    await revokeUserTokens(user.userId);
+
+    await createAuditLog(
+      user.userId,
+      'LOGOUT',
+      'users',
+      user.userId,
+    );
+
+    response.json({ success: true });
   });
 
   router.get('/me', authenticate, (request, response) => {

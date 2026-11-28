@@ -6,6 +6,7 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { hashPassword } from '../src/auth/password.js';
 import { closeDatabase, pool } from '../src/db/pool.js';
+import { hasUsableBoundary, pointInGeoJson } from '../src/geo/zoneService.js';
 import type { HealthChecks } from '../src/routes/health.js';
 
 const healthyChecks: HealthChecks = {
@@ -85,14 +86,20 @@ describe('phase 2 authentication', () => {
         firstName: 'Test',
         lastName: 'Driver',
         todaOrgId,
-        licenseNumber: 'LIC-12345',
-        todaMembershipId: 'TAT-001',
-        vehiclePlateNumber: 'ABC-123',
+        licenseNumber: `${prefix}-LIC`,
+        todaMembershipId: `${prefix}-MEM`,
+        vehiclePlateNumber: `${prefix.slice(0, 6)}-PLT`,
       })
       .expect(201);
 
+    const zone = await pool.query<{ zone_id: string }>(
+      "SELECT zone_id FROM operating_zones WHERE code = 'ZONE_1' LIMIT 1",
+    );
+
     assert.equal(registration.body.user.role, 'driver');
     assert.equal(registration.body.user.verificationStatus, 'pending');
+    assert.equal(registration.body.user.todaOrgId, todaOrgId);
+    assert.equal(registration.body.user.operatingZoneId, zone.rows[0]?.zone_id);
 
     const login = await request(app)
       .post('/api/v1/auth/login')
@@ -160,18 +167,24 @@ describe('phase 2 authentication', () => {
       .set('Authorization', `Bearer ${login.body.token}`)
       .expect(200);
 
-    assert.equal(zones.body.zones.length, 5);
+    assert.equal(zones.body.zones.length, 2);
 
     const zone1 = zones.body.zones.find(
       (zone: { code: string }) => zone.code === 'ZONE_1',
     );
-    const zone3 = zones.body.zones.find(
-      (zone: { code: string }) => zone.code === 'ZONE_3',
+    const zone2 = zones.body.zones.find(
+      (zone: { code: string }) => zone.code === 'ZONE_2',
+    );
+
+    const toda = await pool.query<{ toda_org_id: string }>(
+      "SELECT toda_id AS toda_org_id FROM toda_organizations WHERE code = 'TATMODA' LIMIT 1",
     );
 
     assert.equal(zone1.zoneStatus, 'active');
     assert.equal(zone1.hasBoundary, false);
-    assert.equal(zone3.zoneStatus, 'inactive');
+    assert.equal(zone1.todaOrgId, toda.rows[0]?.toda_org_id);
+    assert.equal(zone2.zoneStatus, 'active');
+    assert.equal(zone2.hasBoundary, false);
 
     const policy = await request(app)
       .get('/api/v1/admin/cross-zone-policy')
@@ -191,5 +204,89 @@ describe('phase 2 authentication', () => {
 
     assert.equal(response.body.status, 'boundary_not_configured');
     assert.equal(response.body.within, null);
+  });
+
+  it('revokes access tokens on logout', async () => {
+    const account = await registerPassenger('logout');
+
+    await request(app)
+      .post('/api/v1/auth/logout')
+      .set('Authorization', `Bearer ${account.token}`)
+      .expect(200);
+
+    const afterLogout = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Authorization', `Bearer ${account.token}`)
+      .expect(401);
+
+    assert.equal(afterLogout.body.error, 'AUTH_USER_INVALID');
+  });
+
+  it('locks an account after repeated failed logins', async () => {
+    const account = await registerPassenger('lockout');
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await request(app)
+        .post('/api/v1/auth/login')
+        .send({ identifier: account.username, password: 'WrongPassword123!' })
+        .expect(401);
+    }
+
+    const locked = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ identifier: account.username, password: 'Password123!' })
+      .expect(401);
+
+    assert.equal(locked.body.error, 'ACCOUNT_LOCKED');
+  });
+
+  it('rejects missing and malformed bearer tokens', async () => {
+    await request(app).get('/api/v1/auth/me').expect(401);
+
+    const malformed = await request(app)
+      .get('/api/v1/auth/me')
+      .set('Authorization', 'Bearer not-a-jwt')
+      .expect(401);
+
+    assert.equal(malformed.body.error, 'AUTH_TOKEN_INVALID');
+  });
+
+  it('validates usable GeoJSON boundaries before reporting them', () => {
+    assert.equal(hasUsableBoundary(null), false);
+    assert.equal(hasUsableBoundary({}), false);
+    assert.equal(
+      hasUsableBoundary({
+        type: 'Polygon',
+        coordinates: [
+          [
+            [0, 0],
+            [1, 0],
+            [1, 1],
+            [0, 1],
+            [0, 0],
+          ],
+        ],
+      }),
+      true,
+    );
+    assert.equal(
+      pointInGeoJson(
+        {
+          type: 'Polygon',
+          coordinates: [
+            [
+              [0, 0],
+              [1, 0],
+              [1, 1],
+              [0, 1],
+              [0, 0],
+            ],
+          ],
+        },
+        0.5,
+        0.5,
+      ),
+      true,
+    );
   });
 });

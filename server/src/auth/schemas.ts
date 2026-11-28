@@ -7,7 +7,13 @@ const usernameSchema = z
   .max(50)
   .regex(/^[A-Za-z0-9_.-]+$/, 'Username contains unsupported characters');
 
-const passwordSchema = z.string().min(8).max(128);
+const passwordSchema = z
+  .string()
+  .min(8)
+  .max(128)
+  .refine((value) => Buffer.byteLength(value, 'utf8') <= 72, {
+    message: 'Password must not exceed 72 bytes',
+  });
 const nameSchema = z.string().trim().min(1).max(100);
 const optionalEmailSchema = z.string().email().max(200).nullable().optional();
 const optionalPhoneSchema = z

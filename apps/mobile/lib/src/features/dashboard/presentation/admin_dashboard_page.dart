@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../../design/components/app_card.dart';
 import '../../../design/components/app_scaffold.dart';
+import '../../auth/data/api_exception.dart';
 import '../../auth/data/auth_repository.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../zone/domain/zone.dart';
@@ -17,22 +18,44 @@ class AdminDashboardPage extends StatefulWidget {
   State<AdminDashboardPage> createState() => _AdminDashboardPageState();
 }
 
+class _DashboardData {
+  const _DashboardData({required this.zones, required this.crossZoneAllowed});
+
+  final List<ZoneSummary> zones;
+  final bool crossZoneAllowed;
+}
+
 class _AdminDashboardPageState extends State<AdminDashboardPage> {
-  late Future<List<ZoneSummary>> _zonesFuture;
+  late Future<_DashboardData> _dashboardFuture;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final token = context.read<AuthController>().token ?? '';
-    _zonesFuture = (widget.repository ?? const AuthRepository()).fetchZones(
-      token: token,
-      admin: true,
-    );
+    final controller = context.read<AuthController>();
+    final token = controller.token;
+    final repository = widget.repository ?? const AuthRepository();
+
+    if (!controller.isAuthenticated || token == null || token.isEmpty) {
+      _dashboardFuture = Future<_DashboardData>.value(
+        const _DashboardData(zones: <ZoneSummary>[], crossZoneAllowed: false),
+      );
+      return;
+    }
+
+    _dashboardFuture = Future.wait<dynamic>(<Future<dynamic>>[
+      repository.fetchZones(token: token, admin: true),
+      repository.fetchCrossZonePolicy(token),
+    ]).then((results) {
+      return _DashboardData(
+        zones: results[0] as List<ZoneSummary>,
+        crossZoneAllowed: results[1] as bool,
+      );
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final controller = context.watch<AuthController>();
+    final controller = context.read<AuthController>();
 
     return AppScaffold(
       title: 'Admin dashboard',
@@ -65,19 +88,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Role-based sign-in and operating-zone oversight are active. Driver verification and user management are planned for Phase 7.',
+                      'Role-based sign-in and operating-zone oversight are active. Driver verification and user management remain later-phase work.',
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 16),
-              Text(
-                'Operating zones',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              FutureBuilder<List<ZoneSummary>>(
-                future: _zonesFuture,
+              FutureBuilder<_DashboardData>(
+                future: _dashboardFuture,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(
@@ -85,40 +103,77 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     );
                   }
 
-                  if (snapshot.hasError || !snapshot.hasData) {
+                  if (snapshot.hasError) {
+                    final error = snapshot.error;
+
+                    if (error is ApiException && error.isAuthFailure) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) async {
+                        await controller.expireSession();
+                        if (context.mounted) {
+                          context.go('/admin/login');
+                        }
+                      });
+                    }
+
                     return AppCard(
                       child: Text(
-                        'Unable to load operating zones: ${snapshot.error}',
+                        error is ApiException
+                            ? error.message
+                            : 'Unable to load administrative data.',
                       ),
                     );
                   }
 
-                  final zones = snapshot.data!;
+                  final data =
+                      snapshot.data ??
+                      const _DashboardData(
+                        zones: <ZoneSummary>[],
+                        crossZoneAllowed: false,
+                      );
+
                   return Column(
-                    children: zones
-                        .map(
-                          (zone) => Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: AppCard(
-                              child: ListTile(
-                                leading: Icon(
-                                  zone.isActive
-                                      ? Icons.check_circle_outline
-                                      : Icons.pause_circle_outline,
-                                ),
-                                title: Text('${zone.code} · ${zone.name}'),
-                                subtitle: Text(
-                                  '${zone.coverageDescription}\n'
-                                  'Status: ${zone.zoneStatus} · '
-                                  'Boundary: ${zone.hasBoundary ? 'configured' : 'not configured'} · '
-                                  'Cross-zone: ${zone.allowCrossZone ? 'allowed' : 'disabled'}',
-                                ),
-                                isThreeLine: true,
-                              ),
-                            ),
-                          ),
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AppCard(
+                        child: Text(
+                          'Cross-zone matching: ${data.crossZoneAllowed ? 'allowed' : 'disabled'}',
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Operating zones',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 12),
+                      if (data.zones.isEmpty)
+                        const AppCard(
+                          child: Text('No operating zones are configured.'),
                         )
-                        .toList(),
+                      else
+                        Column(
+                          children: data.zones.map((zone) {
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: AppCard(
+                                child: ListTile(
+                                  leading: Icon(
+                                    zone.isActive
+                                        ? Icons.check_circle_outline
+                                        : Icons.pause_circle_outline,
+                                  ),
+                                  title: Text('${zone.code} · ${zone.name}'),
+                                  subtitle: Text(
+                                    '${zone.coverageDescription}\n'
+                                    'Status: ${zone.zoneStatus} · '
+                                    'Boundary: ${zone.hasBoundary ? 'configured' : 'not configured'}',
+                                  ),
+                                  isThreeLine: true,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                    ],
                   );
                 },
               ),

@@ -44,6 +44,13 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _setUnauthenticated(String? message) {
+    _status = AuthStatus.unauthenticated;
+    _user = null;
+    _token = null;
+    _error = message;
+  }
+
   Future<void> restore() async {
     _begin();
 
@@ -51,21 +58,24 @@ class AuthController extends ChangeNotifier {
       final token = await _store.readToken();
 
       if (token == null || token.isEmpty) {
-        _status = AuthStatus.unauthenticated;
-        _user = null;
-        _token = null;
-      } else {
+        _setUnauthenticated(null);
+        return;
+      }
+
+      try {
         final user = await _repository.fetchCurrentUser(token);
         _status = AuthStatus.authenticated;
         _user = user;
         _token = token;
+        _error = null;
+      } on ApiException catch (error) {
+        if (error.isAuthFailure) {
+          await _store.clear();
+        }
+        _setUnauthenticated(error.message);
       }
-    } on ApiException catch (error) {
-      await _store.clear();
-      _status = AuthStatus.unauthenticated;
-      _user = null;
-      _token = null;
-      _error = error.message;
+    } catch (_) {
+      _setUnauthenticated('Unable to restore the saved session.');
     } finally {
       _end();
     }
@@ -111,6 +121,9 @@ class AuthController extends ChangeNotifier {
     } on ApiException catch (error) {
       _error = error.message;
       return false;
+    } catch (_) {
+      _error = 'Unable to connect to the server.';
+      return false;
     } finally {
       _end();
     }
@@ -125,6 +138,9 @@ class AuthController extends ChangeNotifier {
       return true;
     } on ApiException catch (error) {
       _error = error.message;
+      return false;
+    } catch (_) {
+      _error = 'Unable to connect to the server.';
       return false;
     } finally {
       _end();
@@ -141,17 +157,35 @@ class AuthController extends ChangeNotifier {
     } on ApiException catch (error) {
       _error = error.message;
       return false;
+    } catch (_) {
+      _error = 'Unable to connect to the server.';
+      return false;
     } finally {
       _end();
     }
   }
 
   Future<void> logout() async {
+    final token = _token;
+
+    if (token != null && token.isNotEmpty) {
+      try {
+        await _repository.logout(token);
+      } on ApiException catch (_) {
+        _error = null;
+      }
+    }
+
     await _store.clear();
-    _status = AuthStatus.unauthenticated;
-    _user = null;
-    _token = null;
-    _error = null;
+    _setUnauthenticated(null);
+    notifyListeners();
+  }
+
+  Future<void> expireSession([
+    String message = 'Your session has expired. Please sign in again.',
+  ]) async {
+    await _store.clear();
+    _setUnauthenticated(message);
     notifyListeners();
   }
 }

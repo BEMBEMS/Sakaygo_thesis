@@ -156,6 +156,10 @@ function pointInPolygon(latitude: number, longitude: number, polygon: Polygon): 
   return true;
 }
 
+export function hasUsableBoundary(geojson: unknown): boolean {
+  return extractPolygons(geojson).length > 0;
+}
+
 export function pointInGeoJson(
   geojson: unknown,
   latitude: number,
@@ -181,7 +185,7 @@ function mapZone(row: ZoneRow, includeGeoJson: boolean): ZoneSummary & {
     zoneStatus: row.zone_status,
     coverageDescription: row.coverage_description,
     geojsonSource: row.geojson_source,
-    hasBoundary: row.geojson !== null && row.geojson !== undefined,
+    hasBoundary: hasUsableBoundary(row.geojson),
     allowCrossZone: row.allow_cross_zone,
   };
 

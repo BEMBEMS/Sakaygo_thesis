@@ -10,6 +10,13 @@ import type {
 } from './models.js';
 import type { UserRole } from './roles.js';
 
+export class TodaNotAuthorizedError extends Error {
+  constructor() {
+    super('Selected TODA is not active or has no active operating zone');
+    this.name = 'TodaNotAuthorizedError';
+  }
+}
+
 interface AuthUserRow {
   user_id: string;
   username: string;
@@ -25,6 +32,9 @@ interface AuthUserRow {
   driver_id?: string | null;
   toda_org_id?: string | null;
   operating_zone_id?: string | null;
+  token_version?: number;
+  failed_login_attempts?: number;
+  locked_until?: Date | null;
 }
 
 interface TodaRow {
@@ -46,6 +56,9 @@ const AUTH_USER_SELECT = `
     u.last_name,
     u.is_active,
     u.password_hash,
+    u.token_version,
+    u.failed_login_attempts,
+    u.locked_until,
     pp.passenger_id,
     dp.driver_id,
     dp.verification_status,
@@ -74,10 +87,17 @@ function mapAuthUser(row: AuthUserRow): AuthUser {
   };
 }
 
-export async function findCredentialsByIdentifier(identifier: string): Promise<{
+export interface LoginCredentials {
   user: AuthUser;
   passwordHash: string;
-} | null> {
+  tokenVersion: number;
+  failedLoginAttempts: number;
+  lockedUntil: Date | null;
+}
+
+export async function findCredentialsByIdentifier(
+  identifier: string,
+): Promise<LoginCredentials | null> {
   const result = await pool.query<AuthUserRow>(
     `${AUTH_USER_SELECT} WHERE u.username = $1 OR u.email = $1 LIMIT 1`,
     [identifier],
@@ -91,7 +111,24 @@ export async function findCredentialsByIdentifier(identifier: string): Promise<{
   return {
     user: mapAuthUser(row),
     passwordHash: row.password_hash,
+    tokenVersion: row.token_version ?? 0,
+    failedLoginAttempts: row.failed_login_attempts ?? 0,
+    lockedUntil: row.locked_until ?? null,
   };
+}
+
+export async function findAuthenticationContext(userId: string): Promise<{
+  user: AuthUser;
+  tokenVersion: number;
+} | null> {
+  const result = await pool.query<AuthUserRow>(
+    `${AUTH_USER_SELECT} WHERE u.user_id = $1 LIMIT 1`,
+    [userId],
+  );
+  const row = result.rows[0];
+  return row
+    ? { user: mapAuthUser(row), tokenVersion: row.token_version ?? 0 }
+    : null;
 }
 
 export async function findAuthUserById(userId: string): Promise<AuthUser | null> {
@@ -101,6 +138,47 @@ export async function findAuthUserById(userId: string): Promise<AuthUser | null>
   );
   const row = result.rows[0];
   return row ? mapAuthUser(row) : null;
+}
+
+export async function resetLoginAttempts(userId: string): Promise<void> {
+  await pool.query(
+    `UPDATE users
+     SET failed_login_attempts = 0, locked_until = NULL
+     WHERE user_id = $1`,
+    [userId],
+  );
+}
+
+export async function recordFailedLogin(
+  userId: string,
+  maxAttempts: number,
+  lockoutMinutes: number,
+): Promise<Date | null> {
+  const result = await pool.query<{ locked_until: Date | null }>(
+    `UPDATE users
+     SET failed_login_attempts = failed_login_attempts + 1,
+         locked_until = CASE
+           WHEN failed_login_attempts + 1 >= $2
+             THEN now() + ($3::int || ' minutes')::interval
+           ELSE locked_until
+         END
+     WHERE user_id = $1
+       AND (locked_until IS NULL OR locked_until <= now())
+     RETURNING locked_until`,
+    [userId, maxAttempts, lockoutMinutes],
+  );
+  return result.rows[0]?.locked_until ?? null;
+}
+
+export async function revokeUserTokens(userId: string): Promise<void> {
+  await pool.query(
+    `UPDATE users
+     SET token_version = token_version + 1,
+         failed_login_attempts = 0,
+         locked_until = NULL
+     WHERE user_id = $1`,
+    [userId],
+  );
 }
 
 export interface PassengerRegistrationInput {
@@ -242,7 +320,33 @@ export async function createDriver(
       throw new Error('Failed to create driver account');
     }
 
-    const toda = await findActiveTodaWithZone(input.todaOrgId);
+    const todaResult = await client.query<{
+      toda_org_id: string;
+      zone_id: string | null;
+    }>(
+      `
+      SELECT
+        t.toda_id AS toda_org_id,
+        (
+          SELECT z.zone_id
+          FROM operating_zones z
+          WHERE z.toda_org_id = t.toda_id
+            AND z.zone_status = 'active'
+          ORDER BY z.code
+          LIMIT 1
+        ) AS zone_id
+      FROM toda_organizations t
+      WHERE t.toda_id = $1 AND t.is_active = true
+      LIMIT 1
+      `,
+      [input.todaOrgId],
+    );
+    const toda = todaResult.rows[0];
+
+    if (!toda || !toda.zone_id) {
+      throw new TodaNotAuthorizedError();
+    }
+
     await client.query(
       `
       INSERT INTO driver_profiles (
@@ -259,8 +363,8 @@ export async function createDriver(
       `,
       [
         userRow.user_id,
-        toda?.todaOrgId ?? input.todaOrgId,
-        toda?.zoneId ?? null,
+        toda.toda_org_id,
+        toda.zone_id,
         input.licenseNumber,
         input.todaMembershipId,
         input.vehiclePlateNumber,

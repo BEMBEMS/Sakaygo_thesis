@@ -74,11 +74,11 @@ Verified MPDC GeoJSON boundaries were not provided. `ZONE_1` and `ZONE_2` remain
 
 ## Test Results
 
-- Backend: `npm test` — 12/12 tests passed, including 5 new Phase 3 tests.
+- Backend: `npm test --prefix server` — 16/16 tests passed, including 5 Phase 3 tests.
 - Backend typecheck: passed.
 - Backend lint: passed.
 - Flutter analyze: no issues.
-- Flutter tests: 16/16 tests passed, including 5 new Phase 3 tests.
+- Flutter tests: 24/24 tests passed, including 5 Phase 3 tests.
 - Flutter web release build: succeeded.
 
 ## Remaining Issues

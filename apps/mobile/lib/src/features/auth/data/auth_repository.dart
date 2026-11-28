@@ -13,7 +13,8 @@ class AuthRepository {
   final http.Client? client;
   final String? baseUrl;
 
-  String get _root => (baseUrl ?? AppConfig.apiBaseUrl).replaceAll(RegExp(r'/$'), '');
+  String get _root =>
+      (baseUrl ?? AppConfig.apiBaseUrl).replaceAll(RegExp(r'/$'), '');
 
   Future<Map<String, dynamic>> _request(
     String method,
@@ -71,10 +72,29 @@ class AuthRepository {
         code: decoded['error'] as String? ?? 'REQUEST_FAILED',
         message: decoded['message'] as String? ??
             'Request failed (${response.statusCode}).',
+        statusCode: response.statusCode,
       );
     }
 
     return decoded;
+  }
+
+  AuthUser _parseUser(dynamic value) {
+    if (value is! Map<String, dynamic>) {
+      throw const ApiException(
+        code: 'INVALID_RESPONSE',
+        message: 'The server returned an invalid user payload.',
+      );
+    }
+
+    try {
+      return AuthUser.fromJson(value);
+    } catch (_) {
+      throw const ApiException(
+        code: 'INVALID_RESPONSE',
+        message: 'The server returned an invalid user payload.',
+      );
+    }
   }
 
   Future<AuthUser> registerPassenger(Map<String, dynamic> body) async {
@@ -83,7 +103,7 @@ class AuthRepository {
       '/api/v1/auth/passenger/register',
       body: body,
     );
-    return AuthUser.fromJson(data['user'] as Map<String, dynamic>);
+    return _parseUser(data['user']);
   }
 
   Future<AuthUser> registerDriver(Map<String, dynamic> body) async {
@@ -92,7 +112,7 @@ class AuthRepository {
       '/api/v1/auth/driver/register',
       body: body,
     );
-    return AuthUser.fromJson(data['user'] as Map<String, dynamic>);
+    return _parseUser(data['user']);
   }
 
   Future<AuthSession> login({
@@ -110,7 +130,11 @@ class AuthRepository {
 
   Future<AuthUser> fetchCurrentUser(String token) async {
     final data = await _request('GET', '/api/v1/auth/me', token: token);
-    return AuthUser.fromJson(data['user'] as Map<String, dynamic>);
+    return _parseUser(data['user']);
+  }
+
+  Future<void> logout(String token) async {
+    await _request('POST', '/api/v1/auth/logout', token: token);
   }
 
   Future<List<TodaOption>> fetchTodas() async {
@@ -122,7 +146,10 @@ class AuthRepository {
         .toList();
   }
 
-  Future<List<ZoneSummary>> fetchZones({required String token, bool admin = false}) async {
+  Future<List<ZoneSummary>> fetchZones({
+    required String token,
+    bool admin = false,
+  }) async {
     final data = await _request(
       'GET',
       admin ? '/api/v1/admin/zones' : '/api/v1/zones',
@@ -133,5 +160,14 @@ class AuthRepository {
         .whereType<Map<String, dynamic>>()
         .map(ZoneSummary.fromJson)
         .toList();
+  }
+
+  Future<bool> fetchCrossZonePolicy(String token) async {
+    final data = await _request(
+      'GET',
+      '/api/v1/admin/cross-zone-policy',
+      token: token,
+    );
+    return data['crossZoneMatchingAllowed'] as bool? ?? false;
   }
 }

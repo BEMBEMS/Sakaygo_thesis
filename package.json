@@ -2,7 +2,7 @@
   "name": "tricycle-matching-thesis",
   "version": "0.1.0",
   "private": true,
-  "description": "Phase 1 foundation for the thesis-based passenger-tricycle matching system",
+  "description": "Thesis-based passenger-tricycle matching system",
   "scripts": {
     "api:install": "npm install --prefix server",
     "api:dev": "npm --prefix server run dev",
